@@ -1,0 +1,11 @@
+.git
+.gitignore
+.gitlab-ci.yml
+.bundle
+vendor
+spec
+.rspec
+*.log
+tmp
+coverage
+README.md
