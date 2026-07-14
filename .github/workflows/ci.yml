@@ -10,7 +10,7 @@ jobs:
     name: Build image
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # Prove the Dockerfile is valid and the app (plus native gems) compiles.
       - name: Build Docker image
         run: docker build -t mini-rate-limiter:${{ github.sha }} .
@@ -31,7 +31,7 @@ jobs:
     env:
       REDIS_URL: redis://localhost:6379/15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
         with:
