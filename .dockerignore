@@ -1,6 +1,6 @@
 .git
 .gitignore
-.gitlab-ci.yml
+.github
 .bundle
 vendor
 spec

@@ -119,8 +119,8 @@ bundle install
 REDIS_URL=redis://localhost:6379/15 bundle exec rspec
 ```
 
-`.gitlab-ci.yml` builds the Docker image, then runs the suite against a Redis service
-container.
+GitHub Actions (`.github/workflows/ci.yml`) builds the Docker image, then runs the
+suite against a Redis service container on every push and pull request.
 
 ## Tradeoffs I'd revisit with more time
 
@@ -135,8 +135,8 @@ container.
   not just on the `429`.
 - **Defense in depth at the edge.** nginx `limit_req` could shed obvious floods before
   they reach Ruby; I left it out to keep a single source of truth for the counting.
-- **Leaner image + faster CI.** A multi-stage Docker build would drop the compiler from
-  the runtime image, and CI would cache the bundle instead of reinstalling each run.
+- **Leaner image.** A multi-stage Docker build would drop the compiler from the runtime
+  image. (CI already caches the bundle via `ruby/setup-ruby`.)
 - **Observability.** Counters for allow/deny per token and Redis latency would be the
   first thing I'd want in production.
 
@@ -150,7 +150,7 @@ nginx/nginx.conf       Reverse proxy config
 spec/                  RSpec suite (unit + HTTP integration)
 Dockerfile             App image
 docker-compose.yml     app + redis + nginx
-.gitlab-ci.yml         Build image, run tests against a Redis service
+.github/workflows/    GitHub Actions: build image, run tests against a Redis service
 ```
 
 ## AI tools used

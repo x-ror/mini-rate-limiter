@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build:
+    name: Build image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Prove the Dockerfile is valid and the app (plus native gems) compiles.
+      - name: Build Docker image
+        run: docker build -t mini-rate-limiter:${{ github.sha }} .
+
+  test:
+    name: Test (RSpec against Redis)
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    env:
+      REDIS_URL: redis://localhost:6379/15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          # Reads .ruby-version; installs gems and caches the bundle.
+          bundler-cache: true
+      - name: Run tests
+        run: bundle exec rspec
