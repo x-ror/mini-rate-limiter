@@ -25,4 +25,6 @@ EXPOSE 4567
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=5 \
   CMD ruby -e "require 'net/http'; exit(Net::HTTP.get_response(URI('http://127.0.0.1:4567/health')).code == '200' ? 0 : 1)" || exit 1
 
-CMD ["bundle", "exec", "puma", "config.ru", "--bind", "tcp://0.0.0.0:4567"]
+# -C loads config/puma.rb (thread count). Bind is set here so the container
+# always listens on all interfaces regardless of puma.rb defaults.
+CMD ["bundle", "exec", "puma", "-C", "config/puma.rb", "--bind", "tcp://0.0.0.0:4567", "config.ru"]

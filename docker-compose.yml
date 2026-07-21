@@ -16,6 +16,10 @@ services:
       REDIS_URL: "redis://redis:6379/0"
       RATE_LIMIT: "60"
       RATE_WINDOW_MS: "60000"
+      # Keep pool size >= Puma max threads so threads never share a Redis socket.
+      PUMA_MAX_THREADS: "5"
+      REDIS_POOL_SIZE: "5"
+      REDIS_POOL_TIMEOUT: "5"
     depends_on:
       redis:
         condition: service_healthy

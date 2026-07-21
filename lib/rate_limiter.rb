@@ -17,6 +17,12 @@ require "securerandom"
 # of 59 and each decide they're allowed. That race is the classic bug in a
 # naive ZCARD-then-ZADD implementation, and Redis executes a script without
 # interleaving other commands, which closes it.
+#
+# Thread-safety: a single Redis client is not safe to share across Puma
+# threads (concurrent use corrupts the socket protocol). Pass either a raw
+# Redis client (tests / single-threaded use) or a ConnectionPool of clients
+# (production under Puma). Multi-command work always runs while holding one
+# checked-out connection.
 class RateLimiter
   # Value object returned by #track and #stats.
   Result = Struct.new(:allowed, :count, :limit, :retry_after, keyword_init: true) do
@@ -60,6 +66,9 @@ class RateLimiter
     return { 0, count, retry_after }
   LUA
 
+  # `redis` may be a Redis client or a ConnectionPool. Both implement #with
+  # (redis-rb yields itself; ConnectionPool checks out a dedicated socket),
+  # so the same call path is safe under Puma's multi-threaded mode.
   def initialize(redis:, limit: 60, window_ms: 60_000, namespace: "ratelimit")
     @redis = redis
     @limit = limit
@@ -72,11 +81,13 @@ class RateLimiter
     now = now_ms
     member = "#{now}-#{SecureRandom.hex(6)}"
 
-    allowed, count, retry_after_ms = @redis.eval(
-      TRACK_SCRIPT,
-      keys: [key_for(token)],
-      argv: [now, @window_ms, @limit, member]
-    )
+    allowed, count, retry_after_ms = @redis.with do |conn|
+      conn.eval(
+        TRACK_SCRIPT,
+        keys: [key_for(token)],
+        argv: [now, @window_ms, @limit, member]
+      )
+    end
 
     Result.new(
       allowed: allowed == 1,
@@ -90,9 +101,11 @@ class RateLimiter
   # request. Trims expired members first so the count is accurate.
   def stats(token)
     key = key_for(token)
-    results = @redis.multi do |t|
-      t.zremrangebyscore(key, 0, now_ms - @window_ms)
-      t.zcard(key)
+    results = @redis.with do |conn|
+      conn.multi do |t|
+        t.zremrangebyscore(key, 0, now_ms - @window_ms)
+        t.zcard(key)
+      end
     end
 
     Result.new(allowed: nil, count: results.last, limit: @limit, retry_after: nil)

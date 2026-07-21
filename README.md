@@ -100,6 +100,11 @@ nginx does two useful things beyond plain proxying:
 - Redis runs with persistence off — these counters are ephemeral by nature.
 - Health, limit, and window are configurable via env (`RATE_LIMIT`,
   `RATE_WINDOW_MS`, `REDIS_URL`), which is also what makes the boundary easy to test.
+- **Thread-safe Redis under Puma.** redis-rb clients are not safe to share across
+  threads (concurrent use corrupts the socket / RESP stream). The app keeps a
+  `ConnectionPool` of Redis clients sized to `PUMA_MAX_THREADS` /
+  `REDIS_POOL_SIZE`, and every limiter command runs inside `pool.with` so each
+  Puma thread holds a dedicated connection for the duration of the call.
 
 ## Tests
 
@@ -143,11 +148,12 @@ suite against a Redis service container on every push and pull request.
 ## Project layout
 
 ```
-app.rb                 Sinatra app: routing + JSON responses
+app.rb                 Sinatra app: routing + JSON + Redis connection pool
 lib/rate_limiter.rb    Redis sliding-window limiter (the Lua script lives here)
+config/puma.rb         Puma threads (keep in sync with REDIS_POOL_SIZE)
 config.ru              Rack entrypoint
 nginx/nginx.conf       Reverse proxy config
-spec/                  RSpec suite (unit + HTTP integration)
+spec/                  RSpec suite (unit + HTTP + multi-thread pool)
 Dockerfile             App image
 docker-compose.yml     app + redis + nginx
 .github/workflows/    GitHub Actions: build image, run tests against a Redis service

@@ -9,6 +9,7 @@ ENV["RACK_ENV"] = "test"
 require "rspec"
 require "rack/test"
 require "redis"
+require "connection_pool"
 
 require_relative "../app"
 require_relative "../lib/rate_limiter"
@@ -17,10 +18,17 @@ RSpec.configure do |config|
   config.expect_with(:rspec) { |c| c.syntax = :expect }
   config.order = :defined
 
-  # Start every example from an empty window.
+  # Start every example from an empty window. Reset the app's process-level
+  # pool so examples that reconfigure ENV (or leave connections dirty) don't
+  # bleed into each other.
   config.before(:each) do
+    App.reset!
     redis = Redis.new(url: ENV.fetch("REDIS_URL"))
     redis.flushdb
     redis.close
+  end
+
+  config.after(:each) do
+    App.reset!
   end
 end

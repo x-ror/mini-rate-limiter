@@ -3,6 +3,7 @@
 require "sinatra/base"
 require "json"
 require "redis"
+require "connection_pool"
 
 require_relative "lib/rate_limiter"
 
@@ -15,20 +16,36 @@ class App < Sinatra::Base
     disable :dump_errors
   end
 
-  # A single shared Redis connection / limiter per process. Both are built
-  # lazily so the app boots even if Redis isn't reachable yet (e.g. during
-  # container start-up) and only fails when a request actually needs it.
+  # Redis clients are not thread-safe: one socket per concurrent Puma thread.
+  # The pool is sized to match Puma's max threads (see config/puma.rb) so we
+  # never block waiting for a free connection under normal load, and never
+  # share a TCP connection across threads (which corrupts the RESP protocol).
+  # Built lazily so the process boots even if Redis isn't up yet.
   class << self
-    def redis
-      @redis ||= Redis.new(url: ENV.fetch("REDIS_URL", "redis://localhost:6379/0"))
+    def redis_pool
+      @redis_pool ||= ConnectionPool.new(
+        size: Integer(ENV.fetch("REDIS_POOL_SIZE", ENV.fetch("PUMA_MAX_THREADS", "5"))),
+        timeout: Float(ENV.fetch("REDIS_POOL_TIMEOUT", "5"))
+      ) do
+        Redis.new(url: ENV.fetch("REDIS_URL", "redis://localhost:6379/0"))
+      end
     end
 
     def limiter
       @limiter ||= RateLimiter.new(
-        redis: redis,
+        redis: redis_pool,
         limit: Integer(ENV.fetch("RATE_LIMIT", "60")),
         window_ms: Integer(ENV.fetch("RATE_WINDOW_MS", "60000"))
       )
+    end
+
+    # Reset cached pool/limiter (tests that need a clean process-level state).
+    def reset!
+      if defined?(@redis_pool) && @redis_pool
+        @redis_pool.shutdown(&:close)
+      end
+      @redis_pool = nil
+      @limiter = nil
     end
   end
 
@@ -54,7 +71,7 @@ class App < Sinatra::Base
   get "/health" do
     redis_ok =
       begin
-        self.class.redis.ping == "PONG"
+        self.class.redis_pool.with { |r| r.ping == "PONG" }
       rescue StandardError
         false
       end
@@ -103,6 +120,14 @@ class App < Sinatra::Base
 
   # If Redis is unreachable mid-request, fail clearly rather than 500-ing.
   error Redis::BaseError do
+    json(503,
+      error: "storage_unavailable",
+      message: "The rate-limit store is temporarily unavailable.")
+  end
+
+  # ConnectionPool raises Timeout::Error when all sockets are busy past
+  # REDIS_POOL_TIMEOUT — treat that as temporary unavailability too.
+  error ConnectionPool::Error, Timeout::Error do
     json(503,
       error: "storage_unavailable",
       message: "The rate-limit store is temporarily unavailable.")

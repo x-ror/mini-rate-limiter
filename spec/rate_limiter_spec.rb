@@ -86,4 +86,61 @@ RSpec.describe RateLimiter do
       expect(stats.remaining).to eq(60)
     end
   end
+
+  # Puma serves requests on multiple threads. A single Redis socket is not
+  # safe to share; production passes a ConnectionPool so each thread checks
+  # out its own connection for the duration of the command(s).
+  describe "multi-threaded use via ConnectionPool" do
+    let(:pool) do
+      ConnectionPool.new(size: 5, timeout: 5) { Redis.new(url: ENV.fetch("REDIS_URL")) }
+    end
+    let(:limit) { 50 }
+
+    subject(:limiter) do
+      described_class.new(redis: pool, limit: limit, window_ms: 60_000)
+    end
+
+    after { pool.shutdown(&:close) }
+
+    it "survives concurrent track/stats without socket/protocol errors" do
+      errors = []
+      mutex = Mutex.new
+
+      threads = 8.times.map do |i|
+        Thread.new do
+          25.times do
+            limiter.track("thread-#{i % 4}")
+            limiter.stats("thread-#{i % 4}")
+          end
+        rescue StandardError => e
+          mutex.synchronize { errors << e }
+        end
+      end
+      threads.each(&:join)
+
+      expect(errors).to be_empty, -> { errors.map { |e| "#{e.class}: #{e.message}" }.join("\n") }
+    end
+
+    it "never over-admits a single token under concurrent load" do
+      results = Queue.new
+
+      threads = 10.times.map do
+        Thread.new do
+          15.times { results << limiter.track("hot-token") }
+        end
+      end
+      threads.each(&:join)
+
+      all = []
+      all << results.pop until results.empty?
+
+      allowed = all.select(&:allowed)
+      denied = all.reject(&:allowed)
+
+      expect(allowed.size).to eq(limit)
+      expect(denied.size).to eq(all.size - limit)
+      expect(allowed.map(&:count).max).to eq(limit)
+      expect(denied).to all(have_attributes(count: limit, allowed: false))
+    end
+  end
 end
